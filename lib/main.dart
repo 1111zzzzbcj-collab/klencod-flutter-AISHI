@@ -1,1250 +1,476 @@
-import 'dart:io';
-import 'dart:math';
+import 'dart:convert';
 import 'package:flutter/material.dart';
-import 'package:image_picker/image_picker.dart';
-import 'package:video_player/video_player.dart';
+import 'package:flutter/services.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
-void main() {
-  runApp(const AishiApp());
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  runApp(const TaskMasterApp());
 }
 
-// ألوان تطبيق AISHI
-const Color bg = Color(0xFF0D1220);
-const Color surface = Color(0xFF171F32);
-const Color surface2 = Color(0xFF202B42);
-const Color accent = Color(0xFF69E0C0);
-const Color muted = Color(0xFF9BA8C2);
+class AppTheme {
+  static const Color background = Color(0xFF0D1117);
+  static const Color surface = Color(0xFF161B22);
+  static const Color surfaceAlt = Color(0xFF21262D);
+  static const Color border = Color(0xFF30363D);
+  static const Color primary = Color(0xFF1F6FEB);
+  static const Color primaryLight = Color(0xFF58A6FF);
+  static const Color success = Color(0xFF2EA043);
+  static const Color danger = Color(0xFFCF222E);
+  static const Color warning = Color(0xFFD29922);
+  static const Color textPrimary = Color(0xFFE6EDF3);
+  static const Color textMuted = Color(0xFF8B949E);
 
-class AishiApp extends StatelessWidget {
-  const AishiApp({super.key});
+  static ThemeData get dark => ThemeData(
+        useMaterial3: true,
+        brightness: Brightness.dark,
+        scaffoldBackgroundColor: background,
+        colorScheme: const ColorScheme.dark(
+          primary: primary,
+          secondary: primaryLight,
+          surface: surface,
+          error: danger,
+          onPrimary: Colors.white,
+          onSurface: textPrimary,
+        ),
+        appBarTheme: const AppBarTheme(
+          backgroundColor: background,
+          elevation: 0,
+          centerTitle: true,
+          titleTextStyle: TextStyle(
+            color: textPrimary,
+            fontSize: 20,
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+        floatingActionButtonTheme: const FloatingActionButtonThemeData(
+          backgroundColor: primary,
+          foregroundColor: Colors.white,
+        ),
+        inputDecorationTheme: InputDecorationTheme(
+          filled: true,
+          fillColor: surfaceAlt,
+          contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+          border: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(14),
+            borderSide: const BorderSide(color: border),
+          ),
+          enabledBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(14),
+            borderSide: const BorderSide(color: border),
+          ),
+          focusedBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(14),
+            borderSide: const BorderSide(color: primaryLight, width: 1.5),
+          ),
+        ),
+      );
+}
+
+class Task {
+  final String id;
+  String title;
+  bool done;
+  final DateTime createdAt;
+
+  Task({
+    required this.id,
+    required this.title,
+    this.done = false,
+    required this.createdAt,
+  });
+
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        'title': title,
+        'done': done,
+        'createdAt': createdAt.toIso8601String(),
+      };
+
+  factory Task.fromJson(Map<String, dynamic> json) => Task(
+        id: json['id'] as String,
+        title: json['title'] as String,
+        done: json['done'] as bool? ?? false,
+        createdAt: DateTime.parse(json['createdAt'] as String),
+      );
+}
+
+class TaskMasterApp extends StatelessWidget {
+  const TaskMasterApp({super.key});
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
       title: 'AISHI',
       debugShowCheckedModeBanner: false,
-      theme: ThemeData(
-        useMaterial3: true,
-        brightness: Brightness.dark,
-        scaffoldBackgroundColor: bg,
-        colorScheme: ColorScheme.fromSeed(
-          seedColor: accent,
-          brightness: Brightness.dark,
-        ),
-      ),
-      home: const AishiHome(),
+      theme: AppTheme.dark,
+      home: const TaskHomePage(),
     );
   }
 }
 
-class AishiStatus {
-  final String name;
-  final String text;
-  final String? path;
-  final String type;
-  final Color color;
-  final DateTime time;
+enum TaskFilter { all, active, completed }
 
-  AishiStatus({
-    required this.name,
-    required this.text,
-    this.path,
-    required this.type,
-    required this.color,
-    required this.time,
-  });
-}
-
-class AishiHome extends StatefulWidget {
-  const AishiHome({super.key});
+class TaskHomePage extends StatefulWidget {
+  const TaskHomePage({super.key});
 
   @override
-  State<AishiHome> createState() => _AishiHomeState();
+  State<TaskHomePage> createState() => _TaskHomePageState();
 }
 
-class _AishiHomeState extends State<AishiHome> {
-  int page = 0;
+class _TaskHomePageState extends State<TaskHomePage>
+    with SingleTickerProviderStateMixin {
+  static const String _storageKey = 'klencod_tasks_v1';
 
-  final String userId =
-      'AI-${Random().nextInt(900000) + 100000}';
+  final List<Task> _tasks = [];
+  final TextEditingController _searchController = TextEditingController();
+  TaskFilter _filter = TaskFilter.all;
+  String _searchQuery = '';
+  bool _loading = true;
+  late AnimationController _fadeController;
 
-  final ImagePicker picker = ImagePicker();
-
-  final TextEditingController searchController =
-      TextEditingController();
-
-  String searchText = '';
-
-  final List<AishiStatus> statuses = [];
-
-  final List<Map<String, dynamic>> contacts = [
-    {
-      'name': 'أحمد محمد',
-      'id': 'AI-184205',
-      'message': 'مرحبًا، كيف حالك؟',
-      'color': const Color(0xFF82A8FF),
-      'unread': 2,
-    },
-    {
-      'name': 'سارة علي',
-      'id': 'AI-639174',
-      'message': 'أرسلت صورة',
-      'color': const Color(0xFFFF9FC8),
-      'unread': 0,
-    },
-    {
-      'name': 'محمد خالد',
-      'id': 'AI-820451',
-      'message': 'نتحدث لاحقًا إن شاء الله',
-      'color': const Color(0xFFFFC66D),
-      'unread': 0,
-    },
-    {
-      'name': 'ملاحظاتي',
-      'id': 'AI-105832',
-      'message': 'مساحة خاصة لك',
-      'color': accent,
-      'unread': 0,
-    },
-  ];
+  @override
+  void initState() {
+    super.initState();
+    _fadeController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 300),
+    );
+    _loadTasks();
+  }
 
   @override
   void dispose() {
-    searchController.dispose();
+    _fadeController.dispose();
+    _searchController.dispose();
     super.dispose();
   }
 
-  @override
-  Widget build(BuildContext context) {
-    return Directionality(
-      textDirection: TextDirection.rtl,
-      child: Scaffold(
-        appBar: AppBar(
-          backgroundColor: bg,
-          title: const Row(
-            children: [
-              Icon(
-                Icons.forum_rounded,
-                color: accent,
-                size: 32,
-              ),
-              SizedBox(width: 10),
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    'AISHI',
-                    style: TextStyle(
-                      fontSize: 23,
-                      fontWeight: FontWeight.w900,
-                    ),
-                  ),
-                  Text(
-                    'تواصل بلا حدود',
-                    style: TextStyle(
-                      fontSize: 11,
-                      color: muted,
-                    ),
-                  ),
-                ],
-              ),
-            ],
-          ),
-          actions: [
-            IconButton(
-              onPressed: () {
-                setState(() => page = 0);
-              },
-              icon: const Icon(Icons.search),
-            ),
-            IconButton(
-              onPressed: _newChat,
-              icon: const Icon(Icons.add_comment_outlined),
-            ),
-          ],
+  Future<void> _loadTasks() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final data = prefs.getString(_storageKey);
+      if (data != null && data.isNotEmpty) {
+        final list = jsonDecode(data) as List<dynamic>;
+        _tasks.clear();
+        _tasks.addAll(list.map((e) => Task.fromJson(e as Map<String, dynamic>)));
+      }
+    } catch (_) {}
+    setState(() => _loading = false);
+    _fadeController.forward();
+  }
+
+  Future<void> _saveTasks() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final data = jsonEncode(_tasks.map((t) => t.toJson()).toList());
+      await prefs.setString(_storageKey, data);
+    } catch (_) {}
+  }
+
+  void _addTask(String title) {
+    final trimmed = title.trim();
+    if (trimmed.isEmpty) return;
+    setState(() {
+      _tasks.insert(
+        0,
+        Task(
+          id: DateTime.now().microsecondsSinceEpoch.toString(),
+          title: trimmed,
+          createdAt: DateTime.now(),
         ),
-        body: SafeArea(
-          child: IndexedStack(
-            index: page,
-            children: [
-              _chatsPage(),
-              _statusesPage(),
-              _peoplePage(),
-              _settingsPage(),
-              _profilePage(),
-            ],
-          ),
-        ),
-        bottomNavigationBar: NavigationBar(
-          backgroundColor: const Color(0xFF12192A),
-          indicatorColor: accent.withOpacity(0.18),
-          selectedIndex: page,
-          onDestinationSelected: (index) {
-            setState(() => page = index);
-          },
-          destinations: const [
-            NavigationDestination(
-              icon: Icon(Icons.chat_bubble_outline),
-              selectedIcon: Icon(Icons.chat_bubble),
-              label: 'الدردشات',
-            ),
-            NavigationDestination(
-              icon: Icon(Icons.donut_large_outlined),
-              selectedIcon: Icon(Icons.donut_large),
-              label: 'الحالات',
-            ),
-            NavigationDestination(
-              icon: Icon(Icons.people_outline),
-              selectedIcon: Icon(Icons.people),
-              label: 'الأشخاص',
-            ),
-            NavigationDestination(
-              icon: Icon(Icons.palette_outlined),
-              selectedIcon: Icon(Icons.palette),
-              label: 'المظهر',
-            ),
-            NavigationDestination(
-              icon: Icon(Icons.account_circle_outlined),
-              selectedIcon: Icon(Icons.account_circle),
-              label: 'حسابي',
-            ),
-          ],
-        ),
+      );
+    });
+    _saveTasks();
+    HapticFeedback.lightImpact();
+    _showSnack('تمت إضافة المهمة', success: true);
+  }
+
+  void _toggleTask(Task task) {
+    setState(() => task.done = !task.done);
+    _saveTasks();
+    HapticFeedback.selectionClick();
+  }
+
+  void _deleteTask(Task task) {
+    final index = _tasks.indexOf(task);
+    if (index == -1) return;
+    setState(() => _tasks.removeAt(index));
+    _saveTasks();
+    _showSnack(
+      'تم حذف المهمة',
+      actionLabel: 'تراجع',
+      onAction: () {
+        setState(() => _tasks.insert(index, task));
+        _saveTasks();
+      },
+    );
+  }
+
+  void _clearCompleted() {
+    final completed = _tasks.where((t) => t.done).toList();
+    if (completed.isEmpty) {
+      _showSnack('لا توجد مهام مكتملة');
+      return;
+    }
+    showDialog(
+      context: context,
+      builder: (ctx) => _buildConfirmDialog(
+        ctx,
+        title: 'حذف المهام المكتملة',
+        message: 'سيتم حذف ${completed.length} مهمة مكتملة. لا يمكن التراجع.',
+        onConfirm: () {
+          setState(() => _tasks.removeWhere((t) => t.done));
+          _saveTasks();
+          Navigator.pop(ctx);
+          _showSnack('تم حذف ${completed.length} مهمة', success: true);
+        },
       ),
     );
   }
 
-  // صفحة المحادثات
-  Widget _chatsPage() {
-    final filtered = contacts.where((contact) {
-      final name = contact['name'].toString();
-      final message = contact['message'].toString();
-
-      return name.contains(searchText) ||
-          message.contains(searchText);
-    }).toList();
-
-    return ListView(
-      padding: const EdgeInsets.all(16),
-      children: [
-        _accountCard(),
-        const SizedBox(height: 22),
-        const Text(
-          'محادثاتك',
-          style: TextStyle(
-            fontSize: 22,
-            fontWeight: FontWeight.bold,
-          ),
-        ),
-        const SizedBox(height: 12),
-        TextField(
-          onChanged: (value) {
-            setState(() => searchText = value);
-          },
-          decoration: InputDecoration(
-            hintText: 'ابحث عن محادثة...',
-            prefixIcon: const Icon(Icons.search),
-            filled: true,
-            fillColor: surface,
-            border: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(16),
-              borderSide: BorderSide.none,
+  void _showSnack(String message,
+      {String? actionLabel, VoidCallback? onAction, bool success = false}) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).clearSnackBars();
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Row(
+          children: [
+            Icon(
+              success ? Icons.check_circle_rounded : Icons.info_outline_rounded,
+              color: success ? AppTheme.success : AppTheme.textPrimary,
+              size: 20,
             ),
-          ),
-        ),
-        const SizedBox(height: 12),
-        ...filtered.map((contact) {
-          return _chatTile(contact);
-        }),
-        const SizedBox(height: 15),
-        Container(
-          padding: const EdgeInsets.all(13),
-          decoration: BoxDecoration(
-            color: surface,
-            borderRadius: BorderRadius.circular(15),
-          ),
-          child: const Text(
-            'هذه نسخة تجريبية. الرسائل لا تصل إلى '
-            'مستخدمين آخرين حتى نربط التطبيق بخادم.',
-            style: TextStyle(
-              color: muted,
-              fontSize: 12,
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                message,
+                style: const TextStyle(color: AppTheme.textPrimary),
+              ),
             ),
-          ),
+          ],
+        ),
+        backgroundColor: AppTheme.surfaceAlt,
+        behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        margin: const EdgeInsets.all(16),
+        duration: const Duration(seconds: 3),
+        action: actionLabel != null
+            ? SnackBarAction(
+                label: actionLabel,
+                textColor: AppTheme.primaryLight,
+                onPressed: onAction ?? () {},
+              )
+            : null,
+      ),
+    );
+  }
+
+  Widget _buildConfirmDialog(
+    BuildContext ctx, {
+    required String title,
+    required String message,
+    required VoidCallback onConfirm,
+  }) {
+    return AlertDialog(
+      backgroundColor: AppTheme.surface,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+      title: Text(title, style: const TextStyle(color: AppTheme.textPrimary)),
+      content: Text(message, style: const TextStyle(color: AppTheme.textMuted)),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(ctx),
+          child: const Text('إلغاء',
+              style: TextStyle(color: AppTheme.textMuted)),
+        ),
+        TextButton(
+          onPressed: onConfirm,
+          child: const Text('تأكيد',
+              style: TextStyle(
+                  color: AppTheme.danger, fontWeight: FontWeight.bold)),
         ),
       ],
     );
   }
 
-  Widget _accountCard() {
-    return Container(
-      padding: const EdgeInsets.all(18),
-      decoration: BoxDecoration(
-        gradient: const LinearGradient(
-          colors: [
-            Color(0xFF253858),
-            Color(0xFF17413D),
+  void _openAddDialog() {
+    final controller = TextEditingController();
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: AppTheme.surface,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+        title: Row(
+          children: const [
+            Icon(Icons.add_task_rounded, color: AppTheme.primaryLight),
+            SizedBox(width: 10),
+            Text('مهمة جديدة',
+                style: TextStyle(color: AppTheme.textPrimary)),
           ],
         ),
-        borderRadius: BorderRadius.circular(22),
-        border: Border.all(
-          color: accent.withOpacity(0.3),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          textInputAction: TextInputAction.done,
+          onSubmitted: (v) {
+            _addTask(v);
+            Navigator.pop(ctx);
+          },
+          decoration: const InputDecoration(
+            hintText: 'اكتب المهمة...',
+            prefixIcon: Icon(Icons.edit_rounded),
+          ),
+          style: const TextStyle(color: AppTheme.textPrimary),
         ),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Row(
-            children: [
-              Icon(Icons.fingerprint, color: accent),
-              SizedBox(width: 8),
-              Text('معرّف حسابك'),
-            ],
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('إلغاء',
+                style: TextStyle(color: AppTheme.textMuted)),
           ),
-          const SizedBox(height: 10),
-          Text(
-            userId,
-            textDirection: TextDirection.ltr,
-            style: const TextStyle(
-              fontSize: 28,
-              fontWeight: FontWeight.bold,
-            ),
-          ),
-          const SizedBox(height: 8),
-          const Text(
-            'احتفظ بمعرّفك للرجوع إليه لاحقًا.',
-            style: TextStyle(color: muted),
+          FilledButton(
+            onPressed: () {
+              _addTask(controller.text);
+              Navigator.pop(ctx);
+            },
+            style: FilledButton.styleFrom(backgroundColor: AppTheme.primary),
+            child: const Text('إضافة'),
           ),
         ],
       ),
     );
   }
 
-  Widget _chatTile(Map<String, dynamic> contact) {
-    return Container(
-      margin: const EdgeInsets.only(bottom: 8),
-      decoration: BoxDecoration(
-        color: surface,
-        borderRadius: BorderRadius.circular(17),
-      ),
-      child: ListTile(
-        contentPadding: const EdgeInsets.symmetric(
-          horizontal: 12,
-          vertical: 5,
-        ),
-        leading: CircleAvatar(
-          radius: 25,
-          backgroundColor:
-              (contact['color'] as Color).withOpacity(0.18),
-          child: Icon(
-            Icons.person,
-            color: contact['color'] as Color,
-          ),
-        ),
-        title: Text(
-          contact['name'].toString(),
-          style: const TextStyle(
-            fontWeight: FontWeight.bold,
-          ),
-        ),
-        subtitle: Text(
-          contact['message'].toString(),
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-          style: const TextStyle(color: muted),
-        ),
-        trailing: const Icon(
-          Icons.chevron_left,
-          color: muted,
-        ),
-        onTap: () {
-          Navigator.push(
-            context,
-            MaterialPageRoute(
-              builder: (_) => ChatPage(
-                contact: contact,
-              ),
-            ),
-          );
-        },
-      ),
-    );
+  List<Task> get _visibleTasks {
+    Iterable<Task> result = _tasks;
+    if (_filter == TaskFilter.active) {
+      result = result.where((t) => !t.done);
+    } else if (_filter == TaskFilter.completed) {
+      result = result.where((t) => t.done);
+    }
+    if (_searchQuery.isNotEmpty) {
+      final q = _searchQuery.toLowerCase();
+      result = result.where((t) => t.title.toLowerCase().contains(q));
+    }
+    return result.toList();
   }
 
-  // صفحة الحالات
-  Widget _statusesPage() {
-    final now = DateTime.now();
-
-    final visibleStatuses = statuses.where((status) {
-      return now.difference(status.time).inHours < 24;
-    }).toList();
-
-    return ListView(
-      padding: const EdgeInsets.all(16),
-      children: [
-        const Text(
-          'الحالات',
-          style: TextStyle(
-            fontSize: 25,
-            fontWeight: FontWeight.bold,
-          ),
-        ),
-        const SizedBox(height: 5),
-        const Text(
-          'شارك لحظاتك مع أصدقائك',
-          style: TextStyle(color: muted),
-        ),
-        const SizedBox(height: 20),
-        Container(
-          padding: const EdgeInsets.all(15),
-          decoration: BoxDecoration(
-            color: surface,
-            borderRadius: BorderRadius.circular(20),
-          ),
-          child: Row(
-            children: [
-              Container(
-                width: 58,
-                height: 58,
-                decoration: BoxDecoration(
-                  color: accent.withOpacity(0.15),
-                  shape: BoxShape.circle,
-                ),
-                child: const Icon(
-                  Icons.add,
-                  color: accent,
-                  size: 30,
-                ),
-              ),
-              const SizedBox(width: 12),
-              const Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      'حالتي',
-                      style: TextStyle(
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                    SizedBox(height: 5),
-                    Text(
-                      'أضف نصًا أو صورة أو فيديو',
-                      style: TextStyle(
-                        color: muted,
-                        fontSize: 12,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              IconButton(
-                onPressed: _showAddStatus,
-                icon: const Icon(
-                  Icons.add_circle,
-                  color: accent,
-                  size: 32,
-                ),
-              ),
-            ],
-          ),
-        ),
-        const SizedBox(height: 22),
-        const Text(
-          'الحالات الحديثة',
-          style: TextStyle(
-            fontSize: 18,
-            fontWeight: FontWeight.bold,
-          ),
-        ),
-        const SizedBox(height: 12),
-        if (visibleStatuses.isEmpty)
-          const Padding(
-            padding: EdgeInsets.all(25),
-            child: Center(
-              child: Text(
-                'لم تنشر حالة بعد. ابدأ بإضافة حالتك!',
-                textAlign: TextAlign.center,
-                style: TextStyle(color: muted),
-              ),
-            ),
-          ),
-        ...visibleStatuses.reversed.map((status) {
-          return _statusTile(status);
-        }),
-      ],
-    );
-  }
-
-  Widget _statusTile(AishiStatus status) {
-    return Container(
-      margin: const EdgeInsets.only(bottom: 10),
-      decoration: BoxDecoration(
-        color: surface,
-        borderRadius: BorderRadius.circular(18),
-      ),
-      child: ListTile(
-        leading: Container(
-          width: 54,
-          height: 54,
-          padding: const EdgeInsets.all(3),
-          decoration: BoxDecoration(
-            shape: BoxShape.circle,
-            border: Border.all(
-              color: accent,
-              width: 2,
-            ),
-          ),
-          child: CircleAvatar(
-            backgroundColor: status.color,
-            child: Icon(
-              status.type == 'video'
-                  ? Icons.play_arrow
-                  : status.type == 'image'
-                      ? Icons.image
-                      : Icons.text_fields,
-              color: Colors.white,
-            ),
-          ),
-        ),
-        title: Text(
-          status.name,
-          style: const TextStyle(
-            fontWeight: FontWeight.bold,
-          ),
-        ),
-        subtitle: Text(
-          status.text.isEmpty
-              ? status.type == 'video'
-                  ? 'حالة فيديو'
-                  : 'حالة صورة'
-              : status.text,
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-          style: const TextStyle(color: muted),
-        ),
-        onTap: () => _openStatus(status),
-      ),
-    );
-  }
-
-  // إضافة حالة نص أو صورة أو فيديو
-  void _showAddStatus() {
-    showModalBottomSheet(
-      context: context,
-      backgroundColor: surface,
-      showDragHandle: true,
-      builder: (sheetContext) {
-        return SafeArea(
-          child: Padding(
-            padding: const EdgeInsets.all(18),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                const Text(
-                  'إضافة حالة جديدة',
-                  style: TextStyle(
-                    fontSize: 21,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-                const SizedBox(height: 18),
-                ListTile(
-                  leading: const Icon(
-                    Icons.text_fields,
-                    color: accent,
-                  ),
-                  title: const Text('حالة نصية'),
-                  subtitle: const Text('اكتب ما تريد مشاركته'),
-                  onTap: () {
-                    Navigator.pop(sheetContext);
-                    _addTextStatus();
-                  },
-                ),
-                ListTile(
-                  leading: const Icon(
-                    Icons.image,
-                    color: accent,
-                  ),
-                  title: const Text('اختيار صورة'),
-                  onTap: () {
-                    Navigator.pop(sheetContext);
-                    _pickMedia(false);
-                  },
-                ),
-                ListTile(
-                  leading: const Icon(
-                    Icons.video_library,
-                    color: accent,
-                  ),
-                  title: const Text('اختيار فيديو'),
-                  onTap: () {
-                    Navigator.pop(sheetContext);
-                    _pickMedia(true);
-                  },
-                ),
-              ],
-            ),
-          ),
-        );
-      },
-    );
-  }
-
-  void _addTextStatus() {
-    final controller = TextEditingController();
-    Color selectedColor = const Color(0xFF285B55);
-
-    showDialog(
-      context: context,
-      builder: (dialogContext) {
-        return StatefulBuilder(
-          builder: (context, setDialogState) {
-            return AlertDialog(
-              backgroundColor: surface,
-              title: const Text('حالة نصية'),
-              content: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  TextField(
-                    controller: controller,
-                    maxLines: 4,
-                    maxLength: 300,
-                    decoration: const InputDecoration(
-                      hintText: 'اكتب حالتك هنا...',
-                      border: OutlineInputBorder(),
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  Wrap(
-                    spacing: 10,
-                    children: [
-                      Colors.teal,
-                      Colors.blue,
-                      Colors.purple,
-                      Colors.deepOrange,
-                      Colors.green,
-                    ].map((color) {
-                      return GestureDetector(
-                        onTap: () {
-                          setDialogState(() {
-                            selectedColor = color;
-                          });
-                        },
-                        child: CircleAvatar(
-                          backgroundColor: color,
-                          radius: 17,
-                          child: selectedColor == color
-                              ? const Icon(
-                                  Icons.check,
-                                  color: Colors.white,
-                                  size: 18,
-                                )
-                              : null,
-                        ),
-                      );
-                    }).toList(),
-                  ),
-                ],
-              ),
-              actions: [
-                TextButton(
-                  onPressed: () => Navigator.pop(dialogContext),
-                  child: const Text('إلغاء'),
-                ),
-                FilledButton(
-                  style: FilledButton.styleFrom(
-                    backgroundColor: accent,
-                    foregroundColor: bg,
-                  ),
-                  onPressed: () {
-                    final text = controller.text.trim();
-
-                    if (text.isEmpty) return;
-
-                    setState(() {
-                      statuses.add(
-                        AishiStatus(
-                          name: 'حالتي',
-                          text: text,
-                          type: 'text',
-                          color: selectedColor,
-                          time: DateTime.now(),
-                        ),
-                      );
-                    });
-
-                    Navigator.pop(dialogContext);
-                  },
-                  child: const Text('نشر'),
-                ),
-              ],
-            );
-          },
-        );
-      },
-    );
-  }
-
-  Future<void> _pickMedia(bool video) async {
-    try {
-      final XFile? file = video
-          ? await picker.pickVideo(
-              source: ImageSource.gallery,
-              maxDuration: const Duration(seconds: 60),
-            )
-          : await picker.pickImage(
-              source: ImageSource.gallery,
-              imageQuality: 90,
-            );
-
-      if (file == null || !mounted) return;
-
-      setState(() {
-        statuses.add(
-          AishiStatus(
-            name: 'حالتي',
-            text: '',
-            path: file.path,
-            type: video ? 'video' : 'image',
-            color: accent,
-            time: DateTime.now(),
-          ),
-        );
-      });
-
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('أُضيفت الحالة بنجاح'),
-        ),
-      );
-    } catch (e) {
-      if (!mounted) return;
-
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('تعذر اختيار الملف: $e'),
+  @override
+  Widget build(BuildContext context) {
+    if (_loading) {
+      return const Scaffold(
+        body: Center(
+          child: CircularProgressIndicator(color: AppTheme.primaryLight),
         ),
       );
     }
-  }
 
-  void _openStatus(AishiStatus status) {
-    if (status.type == 'text') {
-      showDialog(
-        context: context,
-        builder: (_) {
-          return AlertDialog(
-            backgroundColor: status.color,
-            content: SizedBox(
-              width: double.maxFinite,
-              child: Text(
-                status.text,
-                textAlign: TextAlign.center,
-                style: const TextStyle(
-                  fontSize: 24,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
+    final visible = _visibleTasks;
+    final total = _tasks.length;
+    final completed = _tasks.where((t) => t.done).length;
+    final active = total - completed;
+    final progress = total == 0 ? 0.0 : completed / total;
+
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('AISHI'),
+        actions: [
+          if (completed > 0)
+            IconButton(
+              tooltip: 'حذف المكتملة',
+              icon: const Icon(Icons.delete_sweep_rounded),
+              onPressed: _clearCompleted,
             ),
-          );
-        },
-      );
-    } else if (status.type == 'image' && status.path != null) {
-      Navigator.push(
-        context,
-        MaterialPageRoute(
-          builder: (_) => MediaStatusViewer(
-            path: status.path!,
-            video: false,
+        ],
+      ),
+      floatingActionButton: FloatingActionButton.extended(
+        onPressed: _openAddDialog,
+        icon: const Icon(Icons.add_rounded),
+        label: const Text('مهمة جديدة',
+            style: TextStyle(fontWeight: FontWeight.bold)),
+      ),
+      body: Column(
+        children: [
+          _buildHeader(total, completed, active, progress),
+          _buildSearchBar(),
+          _buildFilters(total, active, completed),
+          Expanded(
+            child: visible.isEmpty
+                ? _buildEmptyState()
+                : _buildTaskList(visible),
           ),
-        ),
-      );
-    } else if (status.type == 'video' && status.path != null) {
-      Navigator.push(
-        context,
-        MaterialPageRoute(
-          builder: (_) => MediaStatusViewer(
-            path: status.path!,
-            video: true,
-          ),
-        ),
-      );
-    }
-  }
-
-  // صفحة الأشخاص
-  Widget _peoplePage() {
-    return ListView(
-      padding: const EdgeInsets.all(16),
-      children: [
-        const Text(
-          'الأشخاص',
-          style: TextStyle(
-            fontSize: 25,
-            fontWeight: FontWeight.bold,
-          ),
-        ),
-        const SizedBox(height: 8),
-        const Text(
-          'ابحث عن أصدقائك باستخدام معرّف AISHI.',
-          style: TextStyle(color: muted),
-        ),
-        const SizedBox(height: 20),
-        FilledButton.icon(
-          style: FilledButton.styleFrom(
-            backgroundColor: accent,
-            foregroundColor: bg,
-            padding: const EdgeInsets.all(15),
-          ),
-          onPressed: _newChat,
-          icon: const Icon(Icons.person_add),
-          label: const Text('إضافة شخص بالمعرّف'),
-        ),
-        const SizedBox(height: 20),
-        ...contacts.map((contact) {
-          return _chatTile(contact);
-        }),
-      ],
+        ],
+      ),
     );
   }
 
-  void _newChat() {
-    final controller = TextEditingController();
-
-    showDialog(
-      context: context,
-      builder: (dialogContext) {
-        return AlertDialog(
-          backgroundColor: surface,
-          title: const Text('إضافة شخص'),
-          content: TextField(
-            controller: controller,
-            textDirection: TextDirection.ltr,
-            decoration: const InputDecoration(
-              hintText: 'AI-123456',
-              labelText: 'معرّف المستخدم',
-            ),
+  Widget _buildHeader(int total, int completed, int active, double progress) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
+      child: Container(
+        padding: const EdgeInsets.all(18),
+        decoration: BoxDecoration(
+          gradient: const LinearGradient(
+            colors: [Color(0xFF1F6FEB), Color(0xFF0D419D)],
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
           ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(dialogContext),
-              child: const Text('إلغاء'),
-            ),
-            FilledButton(
-              style: FilledButton.styleFrom(
-                backgroundColor: accent,
-                foregroundColor: bg,
-              ),
-              onPressed: () {
-                Navigator.pop(dialogContext);
-
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(
-                    content: Text(
-                      'البحث الحقيقي يحتاج إلى ربط خادم.',
-                    ),
-                  ),
-                );
-              },
-              child: const Text('بحث'),
+          borderRadius: BorderRadius.circular(20),
+          boxShadow: [
+            BoxShadow(
+              color: AppTheme.primary.withOpacity(0.3),
+              blurRadius: 16,
+              offset: const Offset(0, 6),
             ),
           ],
-        );
-      },
-    );
-  }
-
-  // صفحة المظهر
-  Widget _settingsPage() {
-    return ListView(
-      padding: const EdgeInsets.all(16),
-      children: [
-        const Text(
-          'المظهر والتخصيص',
-          style: TextStyle(
-            fontSize: 24,
-            fontWeight: FontWeight.bold,
-          ),
         ),
-        const SizedBox(height: 20),
-        _settingTile(
-          Icons.color_lens,
-          'ألوان AISHI',
-          'كحلي داكن وأخضر نعناعي',
-        ),
-        _settingTile(
-          Icons.text_fields,
-          'حجم الخط',
-          'إعدادات الخط ستُطوّر لاحقًا',
-        ),
-        _settingTile(
-          Icons.notifications,
-          'الإشعارات',
-          'تحتاج إلى تفعيل خدمة الإشعارات',
-        ),
-        _settingTile(
-          Icons.lock,
-          'الخصوصية',
-          'ستُضاف مع نظام الحسابات',
-        ),
-      ],
-    );
-  }
-
-  // عنصر إعدادات قابل لإضافة أمر عند الضغط
-  Widget _settingTile(
-    IconData icon,
-    String title,
-    String subtitle, {
-    VoidCallback? onTap,
-  }) {
-    return Container(
-      margin: const EdgeInsets.only(bottom: 10),
-      decoration: BoxDecoration(
-        color: surface,
-        borderRadius: BorderRadius.circular(17),
-      ),
-      child: ListTile(
-        leading: Icon(icon, color: accent),
-        title: Text(title),
-        subtitle: Text(
-          subtitle,
-          style: const TextStyle(color: muted),
-        ),
-        onTap: onTap,
-      ),
-    );
-  }
-
-  // صفحة حسابي
-  Widget _profilePage() {
-    return ListView(
-      padding: const EdgeInsets.all(20),
-      children: [
-        const SizedBox(height: 20),
-        const CircleAvatar(
-          radius: 48,
-          backgroundColor: surface2,
-          child: Icon(
-            Icons.person,
-            size: 55,
-            color: accent,
-          ),
-        ),
-        const SizedBox(height: 16),
-        const Center(
-          child: Text(
-            'مستخدم AISHI',
-            style: TextStyle(
-              fontSize: 23,
-              fontWeight: FontWeight.bold,
-            ),
-          ),
-        ),
-        const SizedBox(height: 8),
-        Center(
-          child: Text(
-            userId,
-            textDirection: TextDirection.ltr,
-            style: const TextStyle(
-              color: accent,
-              fontSize: 18,
-            ),
-          ),
-        ),
-        const SizedBox(height: 25),
-        _settingTile(
-          Icons.account_circle,
-          'الملف الشخصي',
-          'تعديل الاسم والصورة قريبًا',
-        ),
-        _settingTile(
-          Icons.shield,
-          'الأمان',
-          'نظام الأمان يحتاج إلى خادم',
-        ),
-        _settingTile(
-          Icons.info_outline,
-          'حول التطبيق',
-          'AISHI - تواصل بلا حدود',
-          onTap: _showAbout,
-        ),
-      ],
-    );
-  }
-
-  // نافذة معلومات التطبيق وصاحب المشروع
-  void _showAbout() {
-    showDialog(
-      context: context,
-      builder: (dialogContext) {
-        return Directionality(
-          textDirection: TextDirection.rtl,
-          child: AlertDialog(
-            backgroundColor: surface,
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(24),
-            ),
-            title: const Column(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
               children: [
-                CircleAvatar(
-                  radius: 38,
-                  backgroundColor: surface2,
-                  child: Icon(
-                    Icons.forum_rounded,
-                    color: accent,
-                    size: 42,
-                  ),
-                ),
-                SizedBox(height: 12),
+                const Icon(Icons.task_alt_rounded,
+                    color: Colors.white, size: 28),
+                const SizedBox(width: 10),
                 Text(
-                  'AISHI',
-                  style: TextStyle(
-                    fontSize: 28,
-                    fontWeight: FontWeight.w900,
-                    color: accent,
-                  ),
-                ),
-                SizedBox(height: 4),
-                Text(
-                  'تواصل بلا حدود',
-                  style: TextStyle(
-                    fontSize: 13,
-                    color: muted,
-                  ),
-                ),
-              ],
-            ),
-            content: const Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Divider(color: surface2),
-                SizedBox(height: 10),
-                Text(
-                  'تطبيق AISHI',
-                  style: TextStyle(
+                  total == 0 ? 'لا توجد مهام بعد' : 'مهامك',
+                  style: const TextStyle(
+                    color: Colors.white,
                     fontSize: 18,
                     fontWeight: FontWeight.bold,
                   ),
                 ),
-                SizedBox(height: 8),
-                Text(
-                  'مساحة للتواصل والمحادثات ومشاركة '
-                  'الحالات والصور والفيديو.',
-                  textAlign: TextAlign.center,
-                  style: TextStyle(
-                    color: muted,
-                    height: 1.6,
-                  ),
-                ),
-                SizedBox(height: 20),
-                Icon(
-                  Icons.person_pin_circle_outlined,
-                  color: accent,
-                  size: 30,
-                ),
-                SizedBox(height: 6),
-                Text(
-                  'صاحب المشروع',
-                  style: TextStyle(
-                    color: muted,
-                    fontSize: 13,
-                  ),
-                ),
-                SizedBox(height: 5),
-                Text(
-                  'خالد الشامي',
-                  style: TextStyle(
-                    fontSize: 19,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-                SizedBox(height: 18),
-                Text(
-                  'الإصدار 1.0.0',
-                  style: TextStyle(
-                    color: muted,
-                    fontSize: 12,
-                  ),
-                ),
-                SizedBox(height: 5),
-                Text(
-                  '© 2026 AISHI',
-                  style: TextStyle(
-                    color: muted,
-                    fontSize: 12,
-                  ),
-                ),
               ],
             ),
-            actionsAlignment: MainAxisAlignment.center,
-            actions: [
-              FilledButton(
-                style: FilledButton.styleFrom(
-                  backgroundColor: accent,
-                  foregroundColor: bg,
-                  minimumSize: const Size(140, 45),
+            const SizedBox(height: 14),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                _statChip('الإجمالي', total, Colors.white),
+                _statChip('نشطة', active, AppTheme.warning),
+                _statChip('مكتملة', completed, AppTheme.success),
+              ],
+            ),
+            const SizedBox(height: 16),
+            ClipRRect(
+              borderRadius: BorderRadius.circular(8),
+              child: TweenAnimationBuilder<double>(
+                tween: Tween(begin: 0, end: progress),
+                duration: const Duration(milliseconds: 600),
+                builder: (_, value, __) => LinearProgressIndicator(
+                  value: value,
+                  minHeight: 8,
+                  backgroundColor: Colors.white24,
+                  valueColor:
+                      const AlwaysStoppedAnimation<Color>(Colors.white),
                 ),
-                onPressed: () => Navigator.pop(dialogContext),
-                child: const Text('إغلاق'),
-              ),
-            ],
-          ),
-        );
-      },
-    );
-  }
-}
-
-// شاشة المحادثة التجريبية
-class ChatPage extends StatefulWidget {
-  final Map<String, dynamic> contact;
-
-  const ChatPage({
-    super.key,
-    required this.contact,
-  });
-
-  @override
-  State<ChatPage> createState() => _ChatPageState();
-}
-
-class _ChatPageState extends State<ChatPage> {
-  final TextEditingController controller =
-      TextEditingController();
-
-  final List<String> messages = [
-    'مرحبًا بك في AISHI 👋',
-    'هذه محادثة تجريبية.',
-  ];
-
-  @override
-  void dispose() {
-    controller.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final color = widget.contact['color'] as Color;
-
-    return Directionality(
-      textDirection: TextDirection.rtl,
-      child: Scaffold(
-        appBar: AppBar(
-          backgroundColor: bg,
-          title: Row(
-            children: [
-              CircleAvatar(
-                backgroundColor: color.withOpacity(0.2),
-                child: Icon(
-                  Icons.person,
-                  color: color,
-                ),
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      widget.contact['name'].toString(),
-                      style: const TextStyle(fontSize: 16),
-                    ),
-                    Text(
-                      widget.contact['id'].toString(),
-                      textDirection: TextDirection.ltr,
-                      style: const TextStyle(
-                        color: muted,
-                        fontSize: 10,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              IconButton(
-                onPressed: () => _notice('المكالمات غير مفعلة بعد'),
-                icon: const Icon(Icons.call),
-              ),
-              IconButton(
-                onPressed: () => _notice(
-                  'مكالمات الفيديو غير مفعلة بعد',
-                ),
-                icon: const Icon(Icons.videocam),
-              ),
-            ],
-          ),
-        ),
-        body: Column(
-          children: [
-            Expanded(
-              child: ListView.builder(
-                padding: const EdgeInsets.all(15),
-                itemCount: messages.length,
-                itemBuilder: (context, index) {
-                  final mine = index.isEven;
-
-                  return Align(
-                    alignment: mine
-                        ? Alignment.centerRight
-                        : Alignment.centerLeft,
-                    child: Container(
-                      constraints: const BoxConstraints(
-                        maxWidth: 290,
-                      ),
-                      margin: const EdgeInsets.only(bottom: 10),
-                      padding: const EdgeInsets.all(13),
-                      decoration: BoxDecoration(
-                        color: mine
-                            ? const Color(0xFF20483F)
-                            : surface,
-                        borderRadius: BorderRadius.circular(17),
-                      ),
-                      child: Text(messages[index]),
-                    ),
-                  );
-                },
               ),
             ),
-            Container(
-              padding: const EdgeInsets.all(8),
-              color: surface,
-              child: Row(
-                children: [
-                  IconButton(
-                    onPressed: () => _notice(
-                      'إرسال الملفات يحتاج إلى تطوير إضافي',
-                    ),
-                    icon: const Icon(
-                      Icons.add_circle_outline,
-                      color: accent,
-                    ),
-                  ),
-                  Expanded(
-                    child: TextField(
-                      controller: controller,
-                      decoration: InputDecoration(
-                        hintText: 'اكتب رسالة...',
-                        filled: true,
-                        fillColor: bg,
-                        border: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(25),
-                          borderSide: BorderSide.none,
-                        ),
-                      ),
-                      onSubmitted: (_) => _send(),
-                    ),
-                  ),
-                  IconButton(
-                    onPressed: _send,
-                    icon: const Icon(
-                      Icons.send,
-                      color: accent,
-                    ),
-                  ),
-                ],
-              ),
+            const SizedBox(height: 6),
+            Text(
+              '${(progress * 100).toStringAsFixed(0)}% إنجاز',
+              style: const TextStyle(color: Colors.white70, fontSize: 12),
             ),
           ],
         ),
@@ -1252,153 +478,286 @@ class _ChatPageState extends State<ChatPage> {
     );
   }
 
-  void _send() {
-    final text = controller.text.trim();
-
-    if (text.isEmpty) return;
-
-    setState(() {
-      messages.add(text);
-    });
-
-    controller.clear();
-  }
-
-  void _notice(String text) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(text)),
+  Widget _statChip(String label, int value, Color color) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+      decoration: BoxDecoration(
+        color: Colors.white.withOpacity(0.15),
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: Column(
+        children: [
+          Text(
+            '$value',
+            style: TextStyle(
+              color: color,
+              fontSize: 18,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+          Text(
+            label,
+            style: const TextStyle(color: Colors.white70, fontSize: 11),
+          ),
+        ],
+      ),
     );
   }
-}
 
-// شاشة عرض الصور والفيديو
-class MediaStatusViewer extends StatefulWidget {
-  final String path;
-  final bool video;
-
-  const MediaStatusViewer({
-    super.key,
-    required this.path,
-    required this.video,
-  });
-
-  @override
-  State<MediaStatusViewer> createState() =>
-      _MediaStatusViewerState();
-}
-
-class _MediaStatusViewerState
-    extends State<MediaStatusViewer> {
-  VideoPlayerController? controller;
-  bool loading = true;
-  String? error;
-
-  @override
-  void initState() {
-    super.initState();
-
-    if (widget.video) {
-      controller = VideoPlayerController.file(
-        File(widget.path),
-      );
-
-      controller!.initialize().then((_) {
-        if (!mounted) return;
-
-        setState(() => loading = false);
-        controller!.play();
-      }).catchError((e) {
-        if (!mounted) return;
-
-        setState(() {
-          loading = false;
-          error = 'تعذر تشغيل الفيديو';
-        });
-      });
-    } else {
-      loading = false;
-    }
-  }
-
-  @override
-  void dispose() {
-    controller?.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: Colors.black,
-      appBar: AppBar(
-        backgroundColor: Colors.black,
-        title: const Text('حالة AISHI'),
+  Widget _buildSearchBar() {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      child: TextField(
+        controller: _searchController,
+        onChanged: (v) => setState(() => _searchQuery = v),
+        style: const TextStyle(color: AppTheme.textPrimary),
+        decoration: InputDecoration(
+          hintText: 'بحث في المهام...',
+          prefixIcon: const Icon(Icons.search_rounded,
+              color: AppTheme.textMuted),
+          suffixIcon: _searchQuery.isNotEmpty
+              ? IconButton(
+                  icon: const Icon(Icons.clear_rounded,
+                      color: AppTheme.textMuted),
+                  onPressed: () {
+                    _searchController.clear();
+                    setState(() => _searchQuery = '');
+                  },
+                )
+              : null,
+        ),
       ),
-      body: Center(
-        child: loading
-            ? const CircularProgressIndicator(
-                color: accent,
-              )
-            : error != null
-                ? Text(error!)
-                : widget.video
-                    ? _videoView()
-                    : InteractiveViewer(
-                        child: Image.file(
-                          File(widget.path),
-                          fit: BoxFit.contain,
-                          errorBuilder: (_, __, ___) {
-                            return const Text(
-                              'تعذر عرض الصورة',
-                            );
-                          },
-                        ),
+    );
+  }
+
+  Widget _buildFilters(int total, int active, int completed) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+      child: Row(
+        children: [
+          _filterChip('الكل', TaskFilter.all, total),
+          const SizedBox(width: 8),
+          _filterChip('نشطة', TaskFilter.active, active),
+          const SizedBox(width: 8),
+          _filterChip('مكتملة', TaskFilter.completed, completed),
+        ],
+      ),
+    );
+  }
+
+  Widget _filterChip(String label, TaskFilter filter, int count) {
+    final selected = _filter == filter;
+    return Expanded(
+      child: GestureDetector(
+        onTap: () => setState(() => _filter = filter),
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 200),
+          padding: const EdgeInsets.symmetric(vertical: 10),
+          decoration: BoxDecoration(
+            color: selected ? AppTheme.primary : AppTheme.surfaceAlt,
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(
+              color: selected ? AppTheme.primaryLight : AppTheme.border,
+            ),
+          ),
+          child: Column(
+            children: [
+              Text(
+                '$count',
+                style: TextStyle(
+                  color: selected ? Colors.white : AppTheme.textPrimary,
+                  fontSize: 16,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+              Text(
+                label,
+                style: TextStyle(
+                  color: selected ? Colors.white70 : AppTheme.textMuted,
+                  fontSize: 11,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildTaskList(List<Task> visible) {
+    return FadeTransition(
+      opacity: _fadeController,
+      child: ListView.builder(
+        padding: const EdgeInsets.fromLTRB(12, 8, 12, 100),
+        itemCount: visible.length,
+        itemBuilder: (context, index) {
+          final task = visible[index];
+          return _buildTaskItem(task);
+        },
+      ),
+    );
+  }
+
+  Widget _buildTaskItem(Task task) {
+    return Dismissible(
+      key: ValueKey(task.id),
+      direction: DismissDirection.endToStart,
+      background: Container(
+        margin: const EdgeInsets.symmetric(vertical: 4),
+        padding: const EdgeInsets.symmetric(horizontal: 20),
+        decoration: BoxDecoration(
+          color: AppTheme.danger,
+          borderRadius: BorderRadius.circular(14),
+        ),
+        alignment: Alignment.centerRight,
+        child: const Icon(Icons.delete_rounded,
+            color: Colors.white, size: 26),
+      ),
+      confirmDismiss: (_) async {
+        _deleteTask(task);
+        return false;
+      },
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 250),
+        margin: const EdgeInsets.symmetric(vertical: 4),
+        decoration: BoxDecoration(
+          color: AppTheme.surface,
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(
+            color: task.done
+                ? AppTheme.success.withOpacity(0.4)
+                : AppTheme.border,
+          ),
+        ),
+        child: Material(
+          color: Colors.transparent,
+          child: InkWell(
+            borderRadius: BorderRadius.circular(14),
+            onTap: () => _toggleTask(task),
+            child: Padding(
+              padding: const EdgeInsets.all(14),
+              child: Row(
+                children: [
+                  AnimatedContainer(
+                    duration: const Duration(milliseconds: 250),
+                    width: 26,
+                    height: 26,
+                    decoration: BoxDecoration(
+                      color: task.done
+                          ? AppTheme.success
+                          : Colors.transparent,
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(
+                        color: task.done
+                            ? AppTheme.success
+                            : AppTheme.textMuted,
+                        width: 2,
                       ),
-      ),
-    );
-  }
-
-  Widget _videoView() {
-    final videoController = controller!;
-
-    if (!videoController.value.isInitialized) {
-      return const CircularProgressIndicator(
-        color: accent,
-      );
-    }
-
-    return Column(
-      mainAxisAlignment: MainAxisAlignment.center,
-      children: [
-        Expanded(
-          child: Center(
-            child: AspectRatio(
-              aspectRatio:
-                  videoController.value.aspectRatio,
-              child: VideoPlayer(videoController),
+                    ),
+                    child: task.done
+                        ? const Icon(Icons.check_rounded,
+                            color: Colors.white, size: 18)
+                        : null,
+                  ),
+                  const SizedBox(width: 14),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          task.title,
+                          style: TextStyle(
+                            color: task.done
+                                ? AppTheme.textMuted
+                                : AppTheme.textPrimary,
+                            fontSize: 15,
+                            decoration: task.done
+                                ? TextDecoration.lineThrough
+                                : null,
+                            decorationColor: AppTheme.textMuted,
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          _formatDate(task.createdAt),
+                          style: const TextStyle(
+                            color: AppTheme.textMuted,
+                            fontSize: 11,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  IconButton(
+                    tooltip: 'حذف',
+                    icon: const Icon(Icons.delete_outline_rounded,
+                        color: AppTheme.textMuted),
+                    onPressed: () => _deleteTask(task),
+                  ),
+                ],
+              ),
             ),
           ),
         ),
-        IconButton(
-          iconSize: 55,
-          color: accent,
-          onPressed: () {
-            setState(() {
-              if (videoController.value.isPlaying) {
-                videoController.pause();
-              } else {
-                videoController.play();
-              }
-            });
-          },
-          icon: Icon(
-            videoController.value.isPlaying
-                ? Icons.pause_circle
-                : Icons.play_circle,
+      ),
+    );
+  }
+
+  String _formatDate(DateTime date) {
+    final now = DateTime.now();
+    final diff = now.difference(date);
+    if (diff.inMinutes < 1) return 'الآن';
+    if (diff.inHours < 1) return 'منذ ${diff.inMinutes} دقيقة';
+    if (diff.inDays < 1) return 'منذ ${diff.inHours} ساعة';
+    if (diff.inDays == 1) return 'أمس';
+    return 'منذ ${diff.inDays} يوم';
+  }
+
+  Widget _buildEmptyState() {
+    final String message;
+    final IconData icon;
+    if (_searchQuery.isNotEmpty) {
+      message = 'لا توجد نتائج للبحث';
+      icon = Icons.search_off_rounded;
+    } else if (_filter == TaskFilter.completed) {
+      message = 'لا توجد مهام مكتملة بعد';
+      icon = Icons.check_circle_outline_rounded;
+    } else if (_filter == TaskFilter.active) {
+      message = 'كل المهام مكتملة!';
+      icon = Icons.celebration_rounded;
+    } else {
+      message = 'ابدأ بإضافة مهمتك الأولى';
+      icon = Icons.playlist_add_rounded;
+    }
+
+    return Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Container(
+            padding: const EdgeInsets.all(24),
+            decoration: BoxDecoration(
+              color: AppTheme.surfaceAlt,
+              shape: BoxShape.circle,
+              border: Border.all(color: AppTheme.border),
+            ),
+            child: Icon(icon, size: 56, color: AppTheme.primaryLight),
           ),
-        ),
-        const SizedBox(height: 20),
-      ],
+          const SizedBox(height: 20),
+          Text(
+            message,
+            style: const TextStyle(
+              color: AppTheme.textMuted,
+              fontSize: 15,
+            ),
+          ),
+          const SizedBox(height: 6),
+          const Text(
+            'استخدم الزر أدناه للبدء',
+            style: TextStyle(color: AppTheme.textMuted, fontSize: 12),
+          ),
+        ],
+      ),
     );
   }
 }

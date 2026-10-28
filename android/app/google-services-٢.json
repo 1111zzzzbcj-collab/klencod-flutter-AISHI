@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "343017924568",
+    "project_id": "aishi-54938",
+    "storage_bucket": "aishi-54938.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:343017924568:android:2cb0f709e3dde26db774ad",
+        "android_client_info": {
+          "package_name": "com.khaled.aishi"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCi8yAYJKGpx8J9xPwra1L-6MSG18MF1wk"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
