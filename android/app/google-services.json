@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "380654870435",
+    "project_id": "aishi-4c606",
+    "storage_bucket": "aishi-4c606.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:380654870435:android:f7e756eb40e1ee15a8c416",
+        "android_client_info": {
+          "package_name": "com.aishi.messengmb"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAFowfGwmPafTpYVFGWMvZFenURZp3HR3c"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
